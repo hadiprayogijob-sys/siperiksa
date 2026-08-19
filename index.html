@@ -71,6 +71,13 @@
   .error-text { color: var(--danger); font-size: 13px; margin: -8px 0 12px; }
 
   .api-key-block { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 20px; }
+  .key-input-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .key-input-row .field-input { margin-bottom: 0; flex: 1; }
+  .toggle-key-btn {
+    background: #fff; border: 1px solid var(--border); color: var(--text-muted);
+    padding: 0 16px; border-radius: 8px; font-size: 12px; white-space: nowrap;
+  }
+  .toggle-key-btn:hover { border-color: var(--accent); color: var(--accent); }
 
   #main-screen { display: flex; height: 100vh; }
   .sidebar {
@@ -196,14 +203,17 @@
       </div>
 
       <div class="api-key-block">
-        <label for="api-key-input" class="field-label">ANTHROPIC API KEY</label>
-        <input id="api-key-input" class="field-input" type="password" placeholder="sk-ant-..." autocomplete="off" />
+        <label for="api-key-input" class="field-label">GOOGLE AI STUDIO API KEY</label>
+        <div class="key-input-row">
+          <input id="api-key-input" class="field-input" type="password" placeholder="AIza..." autocomplete="new-password" spellcheck="false" />
+          <button type="button" id="toggle-key-btn" class="toggle-key-btn">Lihat</button>
+        </div>
         <p id="gate-error" class="error-text hidden"></p>
         <p class="note">
-          Belum punya key? Buat gratis di
-          <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>
-          (perlu isi credit sebelum dipakai). Key disimpan di browser kamu sendiri (localStorage) dan
-          dikirim langsung ke Anthropic, tidak pernah melewati server lain.
+          Belum punya key? Buat gratis (tanpa kartu kredit) di
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>,
+          cukup login pakai akun Google. Key disimpan di browser kamu sendiri (localStorage) dan
+          dikirim langsung ke Google, tidak pernah melewati server lain.
         </p>
       </div>
 
@@ -259,7 +269,7 @@
 
       <footer class="status-bar">
         <span class="status-item"><i class="dot green"></i>SESSION AKTIF</span>
-        <span class="status-item"><i class="dot blue"></i>CLAUDE SONNET</span>
+        <span class="status-item"><i class="dot blue"></i>GEMINI 2.5 FLASH</span>
         <span class="footer-right">OJK SIMULATOR PENGAWAS © 2026</span>
       </footer>
     </main>
@@ -401,7 +411,7 @@ ATURAN UMUM
   return base + STAGE_INSTRUCTIONS[stageKey];
 }
 
-const STORAGE_KEY = 'ojk_simulator_pengawas_api_key';
+const STORAGE_KEY = 'ojk_simulator_pengawas_gemini_key';
 
 let currentCase = null;
 let stageIdx = 0;
@@ -417,6 +427,7 @@ const modeCustomBtn = document.getElementById('mode-custom-btn');
 const presetSection = document.getElementById('preset-section');
 const customSection = document.getElementById('custom-section');
 const apiKeyInput = document.getElementById('api-key-input');
+const toggleKeyBtn = document.getElementById('toggle-key-btn');
 const gateError = document.getElementById('gate-error');
 
 const caseTitle = document.getElementById('case-title');
@@ -470,7 +481,7 @@ function setBusy(isBusy, label) {
   busy = isBusy;
   sendBtn.disabled = isBusy;
   advanceBtn.disabled = isBusy || stageIdx >= STAGES.length - 1;
-  statusText.textContent = isBusy ? (label || 'Menunggu respons Claude...') : '';
+  statusText.textContent = isBusy ? (label || 'Menunggu respons Gemini...') : '';
 }
 
 function renderStageTracker() {
@@ -494,22 +505,27 @@ function addMessage(role, text) {
   chatWindow.scrollTop = chatWindow.scrollHeight;
 }
 
-async function callClaude(systemPrompt, msgHistory, apiKey) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: msgHistory
-    })
-  });
+async function callGemini(systemPrompt, msgHistory, apiKey) {
+  const contents = msgHistory.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }]
+  }));
+
+  const response = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
+      },
+      body: JSON.stringify({
+        contents: contents,
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: { maxOutputTokens: 1000 }
+      })
+    }
+  );
   if (!response.ok) {
     let msg = `Status ${response.status}`;
     try {
@@ -519,7 +535,8 @@ async function callClaude(systemPrompt, msgHistory, apiKey) {
     throw new Error(msg);
   }
   const data = await response.json();
-  return data.content.filter(b => b.type === "text").map(b => b.text).join("");
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  return parts.map(p => p.text || '').join('');
 }
 
 async function startSimulation() {
@@ -531,8 +548,8 @@ async function startSimulation() {
     gateError.classList.remove('hidden');
     return;
   }
-  if (!apiKey.startsWith('sk-ant-')) {
-    gateError.textContent = 'Format API key tampak tidak sesuai (biasanya diawali sk-ant-...). Cek kembali.';
+  if (!apiKey.startsWith('AIza')) {
+    gateError.textContent = 'Format API key tampak tidak sesuai (biasanya diawali AIza...). Cek kembali.';
     gateError.classList.remove('hidden');
     return;
   }
@@ -570,7 +587,7 @@ async function startSimulation() {
 
   try {
     const systemPrompt = buildSystemPrompt(currentCase, STAGES[0].key);
-    const opening = await callClaude(systemPrompt, history, apiKey);
+    const opening = await callGemini(systemPrompt, history, apiKey);
     history.push({ role: "assistant", content: opening });
 
     localStorage.setItem(STORAGE_KEY, apiKey);
@@ -605,7 +622,7 @@ async function sendMessage() {
 
   try {
     const systemPrompt = buildSystemPrompt(currentCase, STAGES[stageIdx].key);
-    const reply = await callClaude(systemPrompt, history, apiKey);
+    const reply = await callGemini(systemPrompt, history, apiKey);
     history.push({ role: "assistant", content: reply });
     addMessage('assistant', reply);
   } catch (err) {
@@ -626,7 +643,7 @@ async function advanceStage() {
 
   try {
     const systemPrompt = buildSystemPrompt(currentCase, STAGES[stageIdx].key);
-    const reply = await callClaude(systemPrompt, history, apiKey);
+    const reply = await callGemini(systemPrompt, history, apiKey);
     history.push({ role: "assistant", content: reply });
 
     renderStageTracker();
@@ -664,6 +681,16 @@ function resetToGate() {
   mainScreen.classList.add('hidden');
   gateScreen.classList.remove('hidden');
 }
+
+toggleKeyBtn.addEventListener('click', () => {
+  if (apiKeyInput.type === 'password') {
+    apiKeyInput.type = 'text';
+    toggleKeyBtn.textContent = 'Sembunyikan';
+  } else {
+    apiKeyInput.type = 'password';
+    toggleKeyBtn.textContent = 'Lihat';
+  }
+});
 
 startBtn.addEventListener('click', startSimulation);
 sendBtn.addEventListener('click', sendMessage);
